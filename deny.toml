@@ -1,0 +1,69 @@
+# cargo-deny configuration for fire_ctrl
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+# ── Advisories ────────────────────────────────────────────────────────────────
+[advisories]
+# Reject crates with known security vulnerabilities.
+version = 2
+ignore = [
+  # Add advisory IDs here when a fix is not yet available and a tracking issue
+  # has been opened. Format: "RUSTSEC-YYYY-NNNN"
+  # Example: "RUSTSEC-2023-0001",
+]
+
+# ── Licences ──────────────────────────────────────────────────────────────────
+[licenses]
+version = 2
+# Allow permissive licences only.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
+  "CC0-1.0",
+  "MPL-2.0",       # Mozilla Public License — file-level copyleft only, acceptable
+  "OpenSSL",
+]
+# Treat unlicensed crates as an error.
+unlicensed = "deny"
+# Copyleft licences are rejected.
+copyleft = "deny"
+# Confidence threshold for licence text matching (0.0–1.0).
+confidence-threshold = 0.9
+
+# ── Bans ──────────────────────────────────────────────────────────────────────
+[bans]
+# Warn on multiple versions of the same crate (can cause binary bloat).
+multiple-versions = "warn"
+# Deny crates that should never be used.
+deny = [
+  # openssl — prefer rustls. Direct use is banned; native-tls is the only
+  # permitted wrapper because chromiumoxide → reqwest 0.12 → hyper-tls pulls it
+  # in transitively and we cannot control that upstream build configuration.
+  # Our own reqwest 0.13 already uses rustls exclusively.
+  { name = "openssl", wrappers = ["native-tls"] },
+  # unmaintained / insecure alternatives
+  { name = "failure" },
+  { name = "rust-crypto" },
+]
+# Skip duplicate-version warnings for crates where it is unavoidable.
+skip = [
+  # Common transitive duplicates across the dependency tree; update as needed.
+]
+skip-tree = []
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+[sources]
+# Only allow crates from crates.io and known git sources.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+  # The official Firecrawl SDK is used in dev-dependencies for contract tests.
+  "https://github.com/firecrawl/firecrawl",
+]

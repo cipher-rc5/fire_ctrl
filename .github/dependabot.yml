@@ -1,0 +1,52 @@
+version: 2
+
+updates:
+  # ── Rust / Cargo ─────────────────────────────────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "UTC"
+    # Limit open PRs to avoid noise; security updates are always opened
+    # regardless of this limit.
+    open-pull-requests-limit: 5
+    # Group all non-security patch/minor updates into a single PR per week.
+    groups:
+      rust-patch-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    # Reviewers / assignees (update to your GitHub handles)
+    # reviewers:
+    #   - "cipher-rc5"
+    # assignees:
+    #   - "cipher-rc5"
+
+  # ── GitHub Actions ───────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    groups:
+      actions-patch-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"

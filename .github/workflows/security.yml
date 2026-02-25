@@ -1,0 +1,45 @@
+name: Security
+
+on:
+  workflow_dispatch:
+
+# Cancel any in-flight run for the same branch/PR so pushes don't queue up.
+# Scheduled runs are never cancelled (each has a unique group key).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+# Default to the minimum permissions needed; individual jobs opt-in to more.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  security:
+    name: Manual Security Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust 1.93.0 toolchain
+        uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Install security tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Run cargo audit
+        run: cargo audit
+
+      - name: Run cargo deny check
+        run: cargo deny check
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

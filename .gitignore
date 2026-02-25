@@ -1,0 +1,5 @@
+/target/
+.env
+*.gguf
+*.log
+.DS_Store

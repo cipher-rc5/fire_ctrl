@@ -1,0 +1,55 @@
+name: Branch Protection
+
+on:
+  workflow_dispatch:
+
+# Minimum permissions at the workflow level; job opts in to administration.
+permissions:
+  contents: read
+
+jobs:
+  protect:
+    name: Enforce main branch protection
+    runs-on: ubuntu-latest
+    env:
+      BRANCH_PROTECTION_TOKEN: ${{ secrets.BRANCH_PROTECTION_TOKEN }}
+    steps:
+      - name: Skip when BRANCH_PROTECTION_TOKEN is not configured
+        if: env.BRANCH_PROTECTION_TOKEN == ''
+        run: |
+          echo "Skipping branch-protection update because BRANCH_PROTECTION_TOKEN is not configured."
+          echo "Add BRANCH_PROTECTION_TOKEN (repo admin PAT) to enable this workflow."
+
+      - name: Apply branch protection rules to main
+        if: env.BRANCH_PROTECTION_TOKEN != ''
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ env.BRANCH_PROTECTION_TOKEN }}
+          script: |
+            await github.rest.repos.updateBranchProtection({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              branch: "main",
+
+              // Disable required CI status checks while Actions are manually
+              // triggered to avoid blocking merges when no checks run.
+              required_status_checks: null,
+
+              // Don't enforce rules for repository admins so you can still
+              // merge hotfixes directly when needed.
+              enforce_admins: false,
+
+              // Require at least one approving review on PRs.
+              required_pull_request_reviews: {
+                required_approving_review_count: 1,
+                dismiss_stale_reviews: true,
+                require_code_owner_reviews: false,
+              },
+
+              // No push restrictions (allow any collaborator to push).
+              restrictions: null,
+
+              allow_force_pushes: false,
+              allow_deletions:    false,
+            });
+            console.log("Branch protection rules applied to main.");

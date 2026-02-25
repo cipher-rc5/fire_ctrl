@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+# Cancel any in-flight run for the same branch/PR so pushes don't queue up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default to the minimum permissions needed; individual jobs opt-in to more.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  ci:
+    name: Manual CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.93.0 toolchain with rustfmt and clippy
+        uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test (unit tests only — no external services required)
+        run: cargo test --bins --locked
+        # Contract tests (sdk_v2_contract) require live infrastructure;
+        # they are opt-in via RUN_FIRECRAWL_CONTRACT_TESTS=1 and are not
+        # run here.

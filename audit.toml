@@ -1,0 +1,13 @@
+# cargo-audit configuration for fire_ctrl
+# Docs: https://docs.rs/cargo-audit
+#
+# To ignore a specific advisory (when a fix is unavailable), add an entry:
+#
+# [[advisories.ignore]]
+# id = "RUSTSEC-YYYY-NNNN"
+# reason = "No fix available yet; tracking issue: <URL>"
+
+[advisories]
+# No ignores at this time — all advisories must be resolved or explicitly
+# acknowledged with a reason and a tracking issue link.
+ignore = []
