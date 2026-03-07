@@ -587,7 +587,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
-<<<<<<< HEAD
 name = "chacha20"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -602,11 +601,6 @@ dependencies = [
 name = "chromiumoxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-=======
-name = "chromiumoxide"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
->>>>>>> 5d09704d808d85df23c0b5383b718ff22c380779
 checksum = "26ed067eb6c1f660bdb87c05efb964421d2ca262bae0296cdfe38cf0cd949a3e"
 dependencies = [
  "async-tungstenite",
@@ -774,7 +768,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1289,11 +1283,7 @@ dependencies = [
 [[package]]
 name = "firecrawl"
 version = "1.2.2"
-<<<<<<< HEAD
-source = "git+https://github.com/firecrawl/firecrawl#6a5c5dfe432d3548964100401cc98a4f4dfb996a"
-=======
-source = "git+https://github.com/firecrawl/firecrawl#5a5d4c86433e6d32682946d58d1f911efc423b8d"
->>>>>>> 5d09704d808d85df23c0b5383b718ff22c380779
+source = "git+https://github.com/firecrawl/firecrawl#8cf89565d7ef621f4a0d19984cb10a409cc88870"
 dependencies = [
  "futures",
  "log",
@@ -1827,11 +1817,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
-<<<<<<< HEAD
  "socket2 0.6.3",
-=======
- "socket2 0.5.10",
->>>>>>> 5d09704d808d85df23c0b5383b718ff22c380779
  "system-configuration",
  "tokio",
  "tower-service",
@@ -2094,15 +2080,9 @@ dependencies = [
 
 [[package]]
 name = "lapin"
-<<<<<<< HEAD
 version = "4.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16eff4aa0d9ab12052d1f967ddec97cd03be4065eea8ed390e8f1dce1f03bf0a"
-=======
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f62a22c69768f31634be5bf964ef36436bed22e2359ac79038fc6d6bd0460e2"
->>>>>>> 5d09704d808d85df23c0b5383b718ff22c380779
 dependencies = [
  "amq-protocol",
  "async-rs",
@@ -2853,11 +2833,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
-<<<<<<< HEAD
  "socket2 0.6.3",
-=======
- "socket2 0.5.10",
->>>>>>> 5d09704d808d85df23c0b5383b718ff22c380779
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2895,11 +2871,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
-<<<<<<< HEAD
  "socket2 0.6.3",
-=======
- "socket2 0.5.10",
->>>>>>> 5d09704d808d85df23c0b5383b718ff22c380779
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -4662,7 +4634,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
