@@ -1283,7 +1283,7 @@ dependencies = [
 [[package]]
 name = "firecrawl"
 version = "1.2.2"
-source = "git+https://github.com/firecrawl/firecrawl#817fc0363becaecc2e02c8787c199a584f51c278"
+source = "git+https://github.com/firecrawl/firecrawl#14c9d2776a1d273d6b486eedef4877eb5f4df4ea"
 dependencies = [
  "futures",
  "log",
