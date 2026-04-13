@@ -22,7 +22,7 @@ jobs:
 
       - name: Apply branch protection rules to main
         if: env.BRANCH_PROTECTION_TOKEN != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ env.BRANCH_PROTECTION_TOKEN }}
           script: |
