@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # web_framework
-axum = { version = "0.8.8", features = ["macros"] }
+axum = { version = "0.8.9", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-full"] }
 
@@ -21,7 +21,7 @@ deadpool-postgres = "0.14"
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 
 # queue / messaging
-lapin = "4.4.0" # rabbitmq_amqp_client
+lapin = "4.5.0" # rabbitmq_amqp_client
 
 # cache / rate-limit
 redis = { version = "1.2.0", features = ["tokio-comp", "connection-manager"] }
