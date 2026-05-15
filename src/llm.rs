@@ -355,7 +355,7 @@ pub fn rank_by_relevance(items: Vec<String>, query: &str) -> Vec<String> {
             (score, s)
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
     scored.into_iter().map(|(_, s)| s).collect()
 }
 
