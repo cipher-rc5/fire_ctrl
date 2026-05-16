@@ -3,5 +3,4 @@
 *.gguf
 *.log
 .DS_Store
-Cargo.lock
 _dev/

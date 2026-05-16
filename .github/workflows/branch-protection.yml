@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   protect:
-    name: Enforce main branch protection
+    name: Enforce master branch protection
     runs-on: ubuntu-latest
     env:
       BRANCH_PROTECTION_TOKEN: ${{ secrets.BRANCH_PROTECTION_TOKEN }}
@@ -20,16 +20,20 @@ jobs:
           echo "Skipping branch-protection update because BRANCH_PROTECTION_TOKEN is not configured."
           echo "Add BRANCH_PROTECTION_TOKEN (repo admin PAT) to enable this workflow."
 
-      - name: Apply branch protection rules to main
+      - name: Apply branch protection rules to master
         if: env.BRANCH_PROTECTION_TOKEN != ''
-        uses: actions/github-script@v9
+        # Pinned to v9.0.0 release tag. Replace with the immutable commit SHA
+        # (e.g. `actions/github-script@<sha> # v9.0.0`) once network access is
+        # available to resolve the tag — this action receives a privileged
+        # admin token and must be pinned by SHA per supply-chain policy.
+        uses: actions/github-script@v9.0.0
         with:
           github-token: ${{ env.BRANCH_PROTECTION_TOKEN }}
           script: |
             await github.rest.repos.updateBranchProtection({
               owner: context.repo.owner,
               repo:  context.repo.repo,
-              branch: "main",
+              branch: "master",
 
               // Disable required CI status checks while Actions are manually
               // triggered to avoid blocking merges when no checks run.
@@ -52,4 +56,4 @@ jobs:
               allow_force_pushes: false,
               allow_deletions:    false,
             });
-            console.log("Branch protection rules applied to main.");
+            console.log("Branch protection rules applied to master.");

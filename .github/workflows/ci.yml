@@ -23,8 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust 1.93.0 toolchain with rustfmt and clippy
-        uses: dtolnay/rust-toolchain@1.100.0
+      - name: Install Rust 1.95.0 toolchain with rustfmt and clippy
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
 

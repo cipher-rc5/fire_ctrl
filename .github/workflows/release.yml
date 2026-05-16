@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag, branch, or commit SHA to build"
+        required: true
+        default: "master"
+
+# Cancel any in-flight release for the same ref so a re-run replaces it.
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  release:
+    name: Build release binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install Rust 1.95.0 toolchain
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: cargo build --release --locked
+        run: cargo build --release --locked
+
+      - name: Compute SHA-256 of release binary
+        run: |
+          cd target/release
+          sha256sum fire_ctrl > fire_ctrl.sha256
+          cat fire_ctrl.sha256
+
+      - name: Upload release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: fire_ctrl-${{ inputs.ref }}
+          path: |
+            target/release/fire_ctrl
+            target/release/fire_ctrl.sha256
+          if-no-files-found: error
