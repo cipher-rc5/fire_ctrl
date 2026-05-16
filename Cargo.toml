@@ -5,6 +5,8 @@ authors = ["cipher-rc5"]
 edition = "2024"
 rust-version = "1.95"
 description = "spec-compliant self-hosted Firecrawl in Rust"
+license = "MIT"
+repository = "https://github.com/cipher-rc5/fire_ctrl"
 
 [[bin]]
 name = "fire_ctrl"
@@ -79,7 +81,7 @@ urlencoding = "2"
 sysinfo = "0.39.1"
 
 [dev-dependencies]
-firecrawl = { git = "https://github.com/firecrawl/firecrawl", package = "firecrawl" }
+firecrawl = { git = "https://github.com/firecrawl/firecrawl", package = "firecrawl", rev = "3afe6df1f48f4485b8a018069ad8bbf54ae99cb2" }
 mockito = "1"
 
 [profile.release]

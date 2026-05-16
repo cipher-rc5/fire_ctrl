@@ -27,14 +27,13 @@ allow = [
   "Zlib",
   "CC0-1.0",
   "MPL-2.0",       # Mozilla Public License — file-level copyleft only, acceptable
-  "OpenSSL",
+  "BSL-1.0",       # Boost Software License — OSI approved (xxhash-rust)
+  "CDLA-Permissive-2.0", # CDLA permissive (webpki-root-certs)
 ]
-# Treat unlicensed crates as an error.
-unlicensed = "deny"
-# Copyleft licences are rejected.
-copyleft = "deny"
+# Treat the workspace crate itself (path source) as licensed implicitly.
+private = { ignore = true }
 # Confidence threshold for licence text matching (0.0–1.0).
-confidence-threshold = 0.9
+confidence-threshold = 0.93
 
 # ── Bans ──────────────────────────────────────────────────────────────────────
 [bans]
