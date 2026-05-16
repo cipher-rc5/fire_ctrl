@@ -276,10 +276,9 @@ just scrape-both
 ## 10) Cleanup operations
 
 ```bash
-just db-clean         # truncate Postgres job/state tables
+just db-clean         # truncate Postgres job/state tables (incl. `nuq.queue_scrape`)
 just redis-clean      # delete Firecrawl Redis keys only
 just redis-flush-all  # flush current Redis DB
-just rabbit-clean     # purge Rabbit queues (if rabbitmqadmin installed)
 just data-clean       # run all cleanup steps above
 ```
 
@@ -288,3 +287,48 @@ just data-clean       # run all cleanup steps above
 - Config is strict/fail-fast; keep `.env` aligned with `.env.example`.
 - Webhook calls are blocked for local addresses unless `ALLOW_LOCAL_WEBHOOKS=true`.
 - Contract tests are opt-in: `RUN_FIRECRAWL_CONTRACT_TESTS=1 just contract-test`.
+
+## End-to-end crawl example
+
+Submit a crawl job:
+
+```bash
+curl -X POST localhost:3002/v2/crawl \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com","limit":5}'
+```
+
+Expected response (shape from `src/models.rs::CrawlResponse`):
+
+```json
+{
+  "success": true,
+  "id": "f1f2c0d8-9b2a-4f24-9c1e-9e0a7f2cfa10",
+  "url": "/v2/crawl/f1f2c0d8-9b2a-4f24-9c1e-9e0a7f2cfa10"
+}
+```
+
+Poll status:
+
+```bash
+curl localhost:3002/v2/crawl/f1f2c0d8-9b2a-4f24-9c1e-9e0a7f2cfa10
+```
+
+Truncated example response while in progress:
+
+```json
+{
+  "status": "scraping",
+  "total": 5,
+  "completed": 2,
+  "failed": 0,
+  "creditsUsed": 2,
+  "expiresAt": "2026-05-22T18:00:00Z",
+  "data": [
+    { "url": "https://example.com/", "markdown": "# Example Domain\n..." }
+  ]
+}
+```
+
+When `status` becomes `completed`, `data` holds all scraped pages and
+`next` is omitted.

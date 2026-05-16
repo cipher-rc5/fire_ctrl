@@ -17,7 +17,7 @@ just install
 | Homebrew check | Exits with a message if `brew` is not found |
 | Package install | Installs each package idempotently — already-installed packages are skipped |
 | TimescaleDB config | Ensures `shared_preload_libraries = 'timescaledb'` is set in `postgresql.conf`; restarts postgresql@17 only if the file was modified |
-| Service start | Starts postgresql@17, redis, and rabbitmq via `brew services` if not already running |
+| Service start | Starts postgresql@17 and redis via `brew services` if not already running |
 | `.env` bootstrap | Copies `.env.example` to `.env` if `.env` does not exist, then exits so credentials can be filled in before re-running |
 | Superuser detection | Probes `$(whoami)` then `postgres` to find a working superuser — Homebrew on macOS bootstraps with the OS username, not `postgres` |
 | Role + database | Creates the Postgres role and database declared in `.env` if they do not already exist |
@@ -89,17 +89,9 @@ Removes all keys in the configured Redis DB.
 just redis-flush-all
 ```
 
-### 4) RabbitMQ queue purge (destructive)
+### 4) Full data cleanup (destructive)
 
-Purges known queues if `rabbitmqadmin` is installed.
-
-```bash
-just rabbit-clean
-```
-
-### 5) Full data cleanup (destructive)
-
-Runs Postgres + Redis namespace cleanup + RabbitMQ purge.
+Runs Postgres + Redis namespace cleanup.
 
 ```bash
 just data-clean
@@ -108,10 +100,9 @@ just data-clean
 ## Recommended incident workflow
 
 1. Check health and DB stats.
-2. Try `just redis-clean` first if queue/cache looks stuck.
-3. If jobs remain inconsistent, run `just db-clean`.
-4. If message backlog remains, run `just rabbit-clean`.
-5. As last resort for cache corruption, run `just redis-flush-all`.
+2. Try `just redis-clean` first if cache looks stuck.
+3. If jobs remain inconsistent, run `just db-clean` (truncates `nuq.queue_scrape` and related state).
+4. As last resort for cache corruption, run `just redis-flush-all`.
 
 ## Restart sequence
 

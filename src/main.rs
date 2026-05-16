@@ -172,16 +172,6 @@ async fn run_healthcheck(cfg: config::Config) -> Result<()> {
         }
     }
 
-    match lapin::Connection::connect(&cfg.rabbitmq.url, lapin::ConnectionProperties::default())
-        .await
-    {
-        Ok(conn) => {
-            let _ = conn.close(0, "healthcheck".into()).await;
-            info!("RabbitMQ: ok");
-        }
-        Err(e) => tracing::warn!("RabbitMQ: {e}"),
-    }
-
     if cfg.llm.is_configured() {
         let llm = llm::LlmClient::new(&cfg.llm)?;
         match llm.health_check().await {
