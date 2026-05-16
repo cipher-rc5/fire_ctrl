@@ -11,6 +11,7 @@ use crate::models::{
 };
 use crate::scraper::Scraper;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,7 +59,8 @@ impl WorkerPool {
 
         let sem = Arc::new(Semaphore::new(cfg.max_concurrent_jobs as usize));
 
-        // Stall-recovery ticker.
+        // Stall-recovery ticker — runs the first scan immediately on startup
+        // (don't wait the full interval), then on a fixed cadence.
         {
             let db2 = Arc::clone(&db);
             let cfg2 = Arc::clone(&cfg);
@@ -67,45 +69,97 @@ impl WorkerPool {
             });
         }
 
-        // Worker tasks.
-        let mut set: JoinSet<()> = JoinSet::new();
-        for id in 0..cfg.num_workers {
-            let w = Worker {
+        // Worker tasks.  Keyed by stable worker id so that a respawned worker
+        // reuses the dead worker's id (logs/metrics keep their identity)
+        // rather than collapsing to `set.len()`, which collides as workers die.
+        //
+        // `next_id` is a monotonically increasing counter — ids are never
+        // recycled across a fresh allocation; an id is only reused when its
+        // owning worker dies and we respawn it in place.
+        let mut next_id: u32 = 0;
+        let mut workers: HashMap<u32, tokio::task::JoinHandle<()>> =
+            HashMap::with_capacity(cfg.num_workers as usize);
+
+        #[allow(clippy::explicit_counter_loop)] // next_id survives the loop intentionally
+        for _ in 0..cfg.num_workers {
+            let id = next_id;
+            next_id = next_id.saturating_add(1);
+            let handle = spawn_worker(
                 id,
-                lock_id: Uuid::new_v4(),
-                db: Arc::clone(&db),
-                scraper: Arc::clone(&scraper),
-                llm: Arc::clone(&llm),
-                cfg: Arc::clone(&cfg),
-                sem: Arc::clone(&sem),
-                allow_local_webhooks: self.allow_local_webhooks,
-                webhook_client: Arc::clone(&webhook_client),
-            };
-            set.spawn(async move { w.run().await });
+                Arc::clone(&db),
+                Arc::clone(&scraper),
+                Arc::clone(&llm),
+                Arc::clone(&cfg),
+                Arc::clone(&sem),
+                self.allow_local_webhooks,
+                Arc::clone(&webhook_client),
+            );
+            workers.insert(id, handle);
         }
 
-        // Monitor; respawn crashed workers.
-        while let Some(res) = set.join_next().await {
-            let new_id = set.len() as u32;
+        // Monitor; respawn workers under their original (stable) id.  We
+        // poll all handles via `futures::future::select_all` so the id of the
+        // finishing task is preserved regardless of clean exit vs panic.
+        while !workers.is_empty() {
+            // Take ownership of all handles into a Vec so select_all can
+            // await them; pair each with its id.
+            let (ids, handles): (Vec<u32>, Vec<tokio::task::JoinHandle<()>>) =
+                workers.drain().unzip();
+
+            let (res, idx, remaining) = futures::future::select_all(handles).await;
+            let dead_id = ids[idx];
+
             if let Err(e) = res {
-                warn!(error = %e, "Worker task panicked — respawning");
+                warn!(worker_id = dead_id, error = %e, "Worker task panicked — respawning");
             }
-            let w = Worker {
-                id: new_id,
-                lock_id: Uuid::new_v4(),
-                db: Arc::clone(&db),
-                scraper: Arc::clone(&scraper),
-                llm: Arc::clone(&llm),
-                cfg: Arc::clone(&cfg),
-                sem: Arc::clone(&sem),
-                allow_local_webhooks: self.allow_local_webhooks,
-                webhook_client: Arc::clone(&webhook_client),
-            };
-            set.spawn(async move { w.run().await });
+
+            // Restore the surviving handles to the map, then respawn the
+            // dead worker under the same id.
+            for (i, h) in remaining.into_iter().enumerate() {
+                let id = if i >= idx { ids[i + 1] } else { ids[i] };
+                workers.insert(id, h);
+            }
+
+            let handle = spawn_worker(
+                dead_id,
+                Arc::clone(&db),
+                Arc::clone(&scraper),
+                Arc::clone(&llm),
+                Arc::clone(&cfg),
+                Arc::clone(&sem),
+                self.allow_local_webhooks,
+                Arc::clone(&webhook_client),
+            );
+            workers.insert(dead_id, handle);
         }
 
         Ok(())
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_worker(
+    id: u32,
+    db: Arc<DbClient>,
+    scraper: Arc<Scraper>,
+    llm: Arc<LlmClient>,
+    cfg: Arc<WorkerConfig>,
+    sem: Arc<Semaphore>,
+    allow_local_webhooks: bool,
+    webhook_client: Arc<reqwest::Client>,
+) -> tokio::task::JoinHandle<()> {
+    let w = Worker {
+        id,
+        lock_id: Uuid::new_v4(),
+        db,
+        scraper,
+        llm,
+        cfg,
+        sem,
+        allow_local_webhooks,
+        webhook_client,
+    };
+    tokio::spawn(async move { w.run().await })
 }
 
 // ---------------------------------------------------------------------------
@@ -115,15 +169,24 @@ impl WorkerPool {
 async fn stall_recovery_loop(db: Arc<DbClient>, cfg: Arc<WorkerConfig>) {
     let stale_after = Duration::from_secs(cfg.job_timeout_seconds + 30);
     let mut backoff = Duration::from_secs(2);
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    // First tick fires immediately — we want the initial scan at startup.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
         match db.requeue_stalled_jobs(stale_after).await {
-            Ok(n) if n > 0 => info!(count = n, "Re-queued stalled jobs"),
-            Ok(_) => {}
+            Ok(n) if n > 0 => {
+                info!(count = n, "Re-queued stalled jobs");
+                backoff = Duration::from_secs(2);
+            }
+            Ok(_) => {
+                backoff = Duration::from_secs(2);
+            }
             Err(e) => {
                 warn!(error = %e, "Stall-recovery requeue failed; backing off");
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(120));
+                interval.tick().await;
                 continue;
             }
         }
@@ -134,7 +197,7 @@ async fn stall_recovery_loop(db: Arc<DbClient>, cfg: Arc<WorkerConfig>) {
                 warn!(error = %e, "Stall fail-over DB error");
             }
         }
-        backoff = Duration::from_secs(2); // reset on success
+        interval.tick().await;
     }
 }
 
@@ -159,7 +222,15 @@ impl Worker {
         info!(worker_id = self.id, lock_id = %self.lock_id, "Worker started");
         loop {
             // Acquire concurrency permit before touching the DB.
-            let permit = self.sem.clone().acquire_owned().await;
+            // If the semaphore has been closed (pool shutdown), exit cleanly —
+            // never panic.
+            let permit = match self.sem.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    warn!(worker_id = self.id, "worker semaphore closed, exiting");
+                    return;
+                }
+            };
 
             match self.db.claim_next_job(self.lock_id).await {
                 Ok(None) => {
@@ -245,11 +316,15 @@ impl Worker {
             JobEnvelope::BatchScrape(job) => self.run_batch_scrape(job_id, created_at, job).await,
             JobEnvelope::Extract(job) => self.run_extract(job_id, created_at, job).await,
             JobEnvelope::Map(_job) => {
-                // Map jobs complete synchronously inside the API handler, so
-                // nothing should arrive here.  If one does, no-op it.
-                warn!(%job_id, "Map job arrived in worker queue (unexpected)");
-                let rv = serde_json::json!({ "links": [] });
-                self.db.complete_job(job_id, created_at, &rv).await
+                // Map jobs are served synchronously by POST /v2/map — the API
+                // never enqueues them, and there is no per-URL work for a
+                // worker to do.  If a Map envelope reaches the queue (legacy
+                // or malformed enqueue), reject it with a terminal failure
+                // rather than silently no-op'ing a fake "completed" result.
+                warn!(%job_id, "Map envelope reached worker queue — rejecting");
+                Err(AppError::BadRequest(
+                    "map jobs are synchronous and must not be enqueued".to_string(),
+                ))
             }
         }
     }
@@ -415,6 +490,13 @@ impl Worker {
 
         let mut results: Vec<ScrapeResult> = Vec::new();
 
+        // Parallelise per-URL scrapes, bounded by the crawler's
+        // `concurrent_requests` so we don't saturate the network or the
+        // browser pool.
+        let parallel = self.scraper.concurrent_requests();
+        let local_sem = Arc::new(Semaphore::new(parallel));
+        let mut tasks: JoinSet<(String, Result<ScrapeResult, AppError>)> = JoinSet::new();
+
         for url in &job.urls {
             let scrape_job = ScrapeJobData {
                 url: url.clone(),
@@ -431,7 +513,33 @@ impl Worker {
                 location: job.scrape_options.location.clone(),
                 webhook: None,
             };
-            match self.scraper.scrape(&scrape_job).await {
+            let scraper = Arc::clone(&self.scraper);
+            let sem = Arc::clone(&local_sem);
+            let url_owned = url.clone();
+            tasks.spawn(async move {
+                let _permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (
+                            url_owned,
+                            Err(AppError::Scraper("local semaphore closed".into())),
+                        );
+                    }
+                };
+                let res = scraper.scrape(&scrape_job).await;
+                (url_owned, res)
+            });
+        }
+
+        while let Some(joined) = tasks.join_next().await {
+            let (url, res) = match joined {
+                Ok(pair) => pair,
+                Err(e) => {
+                    warn!(error = %e, "Batch scrape: worker task panicked (skipping)");
+                    continue;
+                }
+            };
+            match res {
                 Ok(r) => {
                     let rv = serde_json::to_value(&r)?;
                     let sub_data = serde_json::json!({
@@ -487,6 +595,11 @@ impl Worker {
             .and_then(|u| url::Url::parse(u).ok())
             .and_then(|u| u.host_str().map(|h| h.to_owned()));
 
+        // Parallelise per-URL scrapes, bounded by `concurrent_requests`.
+        let parallel = self.scraper.concurrent_requests();
+        let local_sem = Arc::new(Semaphore::new(parallel));
+        let mut tasks: JoinSet<(String, Result<ScrapeResult, AppError>)> = JoinSet::new();
+
         for url in &job.urls {
             if !job.allow_external_links
                 && let (Some(origin), Ok(parsed)) = (origin_host.as_deref(), url::Url::parse(url))
@@ -510,12 +623,42 @@ impl Worker {
                 location: None,
                 webhook: None,
             };
-            if let Ok(result) = self.scraper.scrape(&scrape_job).await {
-                if let Some(md) = result.markdown {
-                    combined_content.push_str(&format!("## {url}\n\n{md}\n\n"));
+            let scraper = Arc::clone(&self.scraper);
+            let sem = Arc::clone(&local_sem);
+            let url_owned = url.clone();
+            tasks.spawn(async move {
+                let _permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return (
+                            url_owned,
+                            Err(AppError::Scraper("local semaphore closed".into())),
+                        );
+                    }
+                };
+                let res = scraper.scrape(&scrape_job).await;
+                (url_owned, res)
+            });
+        }
+
+        while let Some(joined) = tasks.join_next().await {
+            let (url, res) = match joined {
+                Ok(pair) => pair,
+                Err(e) => {
+                    warn!(error = %e, "Extract: scrape task panicked (skipping)");
+                    continue;
                 }
-            } else if !job.ignore_invalid_urls {
-                warn!(url, "Extract: failed to scrape URL");
+            };
+            match res {
+                Ok(result) => {
+                    if let Some(md) = result.markdown {
+                        combined_content.push_str(&format!("## {url}\n\n{md}\n\n"));
+                    }
+                }
+                Err(_) if job.ignore_invalid_urls => {}
+                Err(_) => {
+                    warn!(url, "Extract: failed to scrape URL");
+                }
             }
         }
 

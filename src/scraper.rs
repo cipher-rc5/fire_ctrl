@@ -369,6 +369,12 @@ impl Scraper {
         self.browser.shutdown().await;
     }
 
+    /// Bound for parallel per-URL work spawned by callers (batch scrape,
+    /// extract, search). Sourced from `CRAWL_CONCURRENT_REQUESTS`.
+    pub fn concurrent_requests(&self) -> usize {
+        self.config.concurrent_requests.max(1) as usize
+    }
+
     /// Scrape a single URL and return a `ScrapeResult`.
     pub async fn scrape(&self, job: &ScrapeJobData) -> Result<ScrapeResult, AppError> {
         let _start = Instant::now();
