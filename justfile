@@ -172,7 +172,7 @@ test:
     cargo test
 
 contract-test:
-    RUN_FIRECRAWL_CONTRACT_TESTS=1 cargo test --test sdk_v2_contract -- --nocapture
+    RUN_FIRECRAWL_CONTRACT_TESTS=1 cargo test --features contract-tests --test sdk_v2_contract -- --nocapture
 
 api-suite-quotes:
     bash scripts/api-suite-quotes.sh

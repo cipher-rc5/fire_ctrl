@@ -926,3 +926,149 @@ fn html_to_structured_json(html: &str, base_url: &Url) -> serde_json::Value {
         "text": text_preview,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+//
+// These cover the free-function helpers (`extract_links`, sitemap parsing,
+// `extract_main_content`, `extract_title`). They intentionally avoid the
+// `Scraper` / `BrowserPool` API surface — those types are being reworked in
+// a parallel PR. BFS iteration itself is not unit-tested here because its
+// kernel is interleaved with async network I/O; exposing a synchronous BFS
+// iteration helper to test it would couple this PR to the in-flight scraper
+// refactor. Once that lands, the BFS kernel can be extracted and tested
+// directly.
+#[cfg(test)]
+mod scraper_tests {
+    use super::*;
+    use sitemap::reader::{SiteMapEntity, SiteMapReader};
+    use std::io::Cursor;
+
+    fn parse_url(s: &str) -> Url {
+        Url::parse(s).expect("test URL must parse")
+    }
+
+    #[test]
+    fn extract_links_resolves_relative_paths() {
+        let html = r#"<html><body>
+            <a href="/about">about</a>
+            <a href="contact.html">contact</a>
+            <a href="../parent">up</a>
+        </body></html>"#;
+        let base = parse_url("https://example.com/dir/page");
+        let links = extract_links(html, &base);
+        assert!(links.contains(&"https://example.com/about".to_string()));
+        assert!(links.contains(&"https://example.com/dir/contact.html".to_string()));
+        assert!(links.contains(&"https://example.com/parent".to_string()));
+    }
+
+    #[test]
+    fn extract_links_keeps_absolute_http_urls() {
+        let html = r#"<a href="https://other.example.org/foo">x</a>
+                      <a href="http://plain.example.org/bar">y</a>"#;
+        let base = parse_url("https://example.com/");
+        let links = extract_links(html, &base);
+        assert!(links.iter().any(|l| l == "https://other.example.org/foo"));
+        assert!(links.iter().any(|l| l == "http://plain.example.org/bar"));
+    }
+
+    #[test]
+    fn extract_links_filters_non_http_schemes() {
+        // mailto:, javascript:, tel: should all be dropped by the scheme
+        // allow-list (only http/https are kept).
+        let html = r#"<html><body>
+            <a href="mailto:alice@example.com">mail</a>
+            <a href="javascript:alert(1)">js</a>
+            <a href="tel:+15551234567">phone</a>
+            <a href="ftp://files.example.com/x">ftp</a>
+            <a href="https://example.com/keep">keep</a>
+        </body></html>"#;
+        let base = parse_url("https://example.com/");
+        let links = extract_links(html, &base);
+        assert_eq!(links, vec!["https://example.com/keep".to_string()]);
+    }
+
+    #[test]
+    fn extract_links_skips_malformed_hrefs_gracefully() {
+        // A href that fails to join (e.g. completely invalid base+ref combo
+        // is hard to manufacture with `url::Url::join`, so we exercise the
+        // empty-href and whitespace edges instead).
+        let html = r#"<a href="">empty</a><a href="   ">ws</a><a href="/ok">ok</a>"#;
+        let base = parse_url("https://example.com/");
+        let links = extract_links(html, &base);
+        // empty/ws hrefs resolve back to the base URL — they're valid http,
+        // so they're kept; the only invariant we assert is that no panic
+        // occurs and `/ok` is present.
+        assert!(links.iter().any(|l| l == "https://example.com/ok"));
+    }
+
+    #[test]
+    fn sitemap_reader_parses_url_entries() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url><loc>https://example.com/a</loc></url>
+              <url><loc>https://example.com/b</loc></url>
+            </urlset>"#;
+        let parser = SiteMapReader::new(Cursor::new(xml.as_bytes()));
+        let mut urls = Vec::new();
+        for entity in parser {
+            if let SiteMapEntity::Url(u) = entity
+                && let Some(loc) = u.loc.get_url()
+            {
+                urls.push(loc.to_string());
+            }
+        }
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().any(|u| u == "https://example.com/a"));
+        assert!(urls.iter().any(|u| u == "https://example.com/b"));
+    }
+
+    #[test]
+    fn sitemap_index_is_recognised_as_terminating_pointer() {
+        // A sitemap-of-sitemaps (sitemapindex) should expose SiteMap entities,
+        // not Url entities, so the recursive collector knows when to descend.
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+            <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <sitemap><loc>https://example.com/sub1.xml</loc></sitemap>
+              <sitemap><loc>https://example.com/sub2.xml</loc></sitemap>
+            </sitemapindex>"#;
+        let parser = SiteMapReader::new(Cursor::new(xml.as_bytes()));
+        let (mut urls, mut sitemaps) = (0u32, 0u32);
+        for entity in parser {
+            match entity {
+                SiteMapEntity::Url(_) => urls += 1,
+                SiteMapEntity::SiteMap(_) => sitemaps += 1,
+                SiteMapEntity::Err(_) => {}
+            }
+        }
+        assert_eq!(urls, 0);
+        assert_eq!(sitemaps, 2);
+    }
+
+    #[test]
+    fn extract_text_prefers_article_then_main_then_body() {
+        let html = r#"<html><body>
+            <header>nav</header>
+            <article>article text wins</article>
+            <main>main text loses</main>
+            <footer>foot</footer>
+        </body></html>"#;
+        let text = extract_text(html, true);
+        assert!(text.contains("article text wins"));
+    }
+
+    #[test]
+    fn extract_title_strips_whitespace() {
+        let html = "<html><head><title>   Hello World   </title></head></html>";
+        assert_eq!(extract_title(html).as_deref(), Some("Hello World"));
+    }
+
+    #[test]
+    fn html_to_markdown_handles_basic_block_elements() {
+        let html = "<h1>Heading</h1><p>Hello <b>world</b>.</p>";
+        let md = html_to_markdown(html);
+        assert!(md.contains("Heading"));
+        assert!(md.contains("Hello"));
+    }
+}

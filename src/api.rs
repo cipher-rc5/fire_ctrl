@@ -45,6 +45,12 @@ use crate::scraper::Scraper;
 #[derive(Clone)]
 pub struct ResourceSnapshot(Arc<AtomicU64>);
 
+impl Default for ResourceSnapshot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResourceSnapshot {
     pub fn new() -> Self {
         Self(Arc::new(AtomicU64::new(0)))
@@ -108,6 +114,34 @@ pub fn router(state: AppState) -> Router {
 // ---------------------------------------------------------------------------
 // auth_middleware_helper
 // ---------------------------------------------------------------------------
+
+/// Test-only re-export of the auth gate so integration tests in
+/// `tests/api_handlers.rs` can exercise it without a live Postgres pool.
+#[doc(hidden)]
+pub fn check_auth_for_test(headers: &HeaderMap, cfg: &Config) -> Result<(), AppError> {
+    check_auth(headers, cfg)
+}
+
+/// Test-only re-export of the resource gate.
+#[doc(hidden)]
+pub fn check_resources_for_test(state: &AppState) -> Result<(), AppError> {
+    check_resources(state)
+}
+
+/// Test-only setter that pokes a synthetic CPU/RAM fraction into the snapshot
+/// so the resource gate can be exercised deterministically.
+#[doc(hidden)]
+pub fn set_resource_snapshot_for_test(snap: &ResourceSnapshot, cpu_frac: f64, ram_frac: f64) {
+    snap.store(cpu_frac, ram_frac);
+}
+
+/// Test-only constructor for the request router. The signature mirrors
+/// [`router`] so tests can call it directly without depending on every public
+/// field of [`AppState`].
+#[doc(hidden)]
+pub fn build_router_for_test(state: AppState) -> Router {
+    router(state)
+}
 
 fn check_auth(headers: &HeaderMap, cfg: &Config) -> Result<(), AppError> {
     if !cfg.auth.use_db_authentication {

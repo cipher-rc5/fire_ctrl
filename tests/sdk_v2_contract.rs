@@ -1,5 +1,11 @@
+#![cfg(feature = "contract-tests")]
 /// file: tests/sdk_v2_contract.rs
 /// description: Optional Firecrawl SDK v2 compatibility contract integration tests.
+///
+/// Compiled only with `--features contract-tests` because the upstream
+/// `firecrawl` SDK occasionally restructures its `v2` module between commits
+/// and we don't want a transient upstream break to fail the default test
+/// matrix. Run with: `cargo test --features contract-tests --test sdk_v2_contract`.
 use std::time::{Duration, Instant};
 
 use firecrawl::v2::{Client, CrawlOptions, Format, JobStatus, ScrapeOptions};
