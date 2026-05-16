@@ -1,12 +1,6 @@
 /// file: src/main.rs
 /// description: CLI entrypoint, runtime setup, and server/worker startup orchestration.
-mod api;
-mod config;
-mod database;
-mod llm;
-mod models;
-mod scraper;
-mod worker;
+use fire_ctrl::{api, config, database, llm, scraper, worker};
 
 use anyhow::Result;
 use axum::http::{HeaderValue, Method, header};

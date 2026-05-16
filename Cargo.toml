@@ -8,9 +8,28 @@ description = "spec-compliant self-hosted Firecrawl in Rust"
 license = "MIT"
 repository = "https://github.com/cipher-rc5/fire_ctrl"
 
+[lib]
+name = "fire_ctrl"
+path = "src/lib.rs"
+
 [[bin]]
 name = "fire_ctrl"
 path = "src/main.rs"
+
+[[bench]]
+name = "scraper"
+harness = false
+
+[features]
+# Enables the optional Firecrawl SDK v2 compatibility contract tests in
+# `tests/sdk_v2_contract.rs`. Off by default so `cargo test` compiles without
+# pulling in an upstream SDK that may not always match our pinned commit.
+contract-tests = []
+# Enables the testcontainers-backed Postgres integration test in
+# `tests/postgres_queue.rs`. Off by default because (a) it needs Docker and
+# (b) the testcontainers crate's API changes between minor versions and we
+# don't want a drift in that dep to break `cargo check --all-targets`.
+postgres-integration = []
 
 [dependencies]
 # web_framework
@@ -80,6 +99,14 @@ sysinfo = "0.39.1"
 [dev-dependencies]
 firecrawl = { git = "https://github.com/firecrawl/firecrawl", package = "firecrawl", rev = "3afe6df1f48f4485b8a018069ad8bbf54ae99cb2" }
 mockito = "1"
+# `tower::ServiceExt::oneshot` for in-process Router smoke tests.
+tower = { version = "0.5", features = ["util"] }
+# Property-based testing for the LLM JSON extractor.
+proptest = "1"
+# Postgres integration tests against a containerised TimescaleDB.
+testcontainers = "0.27"
+# Benchmark harness for BFS + markdown conversion.
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [profile.release]
 opt-level = 3

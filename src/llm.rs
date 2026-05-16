@@ -286,7 +286,13 @@ impl LlmClient {
         })
     }
 
-    fn extract_json(&self, content: &str) -> Result<String> {
+    /// Extract a JSON object/array from an LLM completion that may have
+    /// wrapped it in markdown fences or surrounding prose.
+    ///
+    /// Public so property-based tests under `tests/extract_json_props.rs` can
+    /// exercise it independently of the rest of the LLM client.
+    #[doc(hidden)]
+    pub fn extract_json(&self, content: &str) -> Result<String> {
         let trimmed = content.trim();
 
         if trimmed.starts_with('{') || trimmed.starts_with('[') {
