@@ -37,7 +37,11 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        # Default-feature build only. `contract-tests` and `postgres-integration`
+        # are opt-in features that pull in upstream SDKs / testcontainers and
+        # may drift independently of our code; they are exercised by separate
+        # jobs.
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: cargo test (unit tests only — no external services required)
         run: cargo test --bins --locked

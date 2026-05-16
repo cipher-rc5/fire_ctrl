@@ -16,7 +16,7 @@ Run these before opening or merging a PR:
 ```bash
 cargo fmt --all
 cargo check --all-targets
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test --bins --locked
 ```
 
@@ -43,7 +43,7 @@ When you want hosted verification:
 ```bash
 cargo fmt --all
 cargo check --all-targets
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test --bins --locked
 just security
 just docs
