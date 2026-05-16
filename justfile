@@ -26,7 +26,6 @@ install:
         timescaledb
         timescaledb-tools
         redis
-        rabbitmq
         rust
         just
         jq
@@ -94,14 +93,6 @@ install:
         sleep "${SERVICE_STARTUP_WAIT_SHORT}"
     else
         echo "✓ redis already running"
-    fi
-
-    if ! brew services list | grep "^rabbitmq[[:space:]]" | grep -q "started"; then
-        echo "→ Starting rabbitmq ..."
-        brew services start rabbitmq
-        sleep "${SERVICE_STARTUP_WAIT_LONG}"
-    else
-        echo "✓ rabbitmq already running"
     fi
 
     # ── 5. Initialise .env ────────────────────────────────────────────────
@@ -296,20 +287,7 @@ redis-flush-all:
         echo "Cancelled"
     fi
 
-rabbit-clean:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source .env
-    echo "Attempting RabbitMQ cleanup (if rabbitmqadmin is installed)"
-    if command -v rabbitmqadmin >/dev/null 2>&1; then
-        rabbitmqadmin --url="${NUQ_RABBITMQ_URL}" purge queue name=default || true
-        rabbitmqadmin --url="${NUQ_RABBITMQ_URL}" purge queue name=firecrawl || true
-        echo "RabbitMQ queue purge attempted"
-    else
-        echo "rabbitmqadmin not found; install it to enable RabbitMQ purge"
-    fi
-
-data-clean: db-clean redis-clean rabbit-clean
+data-clean: db-clean redis-clean
     @echo "Data cleanup complete"
 
 # ── Production ─────────────────────────────────────────────────────────────

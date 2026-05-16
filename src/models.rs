@@ -642,7 +642,6 @@ pub struct HealthResponse {
 pub struct ServiceHealth {
     pub database: ComponentStatus,
     pub redis: ComponentStatus,
-    pub rabbitmq: ComponentStatus,
     pub llm: ComponentStatus,
 }
 

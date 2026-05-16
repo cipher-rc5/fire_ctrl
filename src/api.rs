@@ -190,14 +190,13 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
         (Ok(()), Err(e)) => Err(format!("rate-limit redis: {e}")),
         (Err(a), Err(b)) => Err(format!("primary redis: {a}; rate-limit redis: {b}")),
     };
-    let rabbit_ok = ping_rabbitmq(&state.cfg.rabbitmq.url).await;
     let llm_ok = if state.cfg.llm.is_configured() {
         state.llm.health_check().await.is_ok()
     } else {
         true // not configured → not checked
     };
 
-    let overall = if db_ok.is_ok() && redis_ok.is_ok() && rabbit_ok.is_ok() && llm_ok {
+    let overall = if db_ok.is_ok() && redis_ok.is_ok() && llm_ok {
         "ok"
     } else {
         "degraded"
@@ -213,10 +212,6 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
             redis: ComponentStatus {
                 healthy: redis_ok.is_ok(),
                 error: redis_ok.err(),
-            },
-            rabbitmq: ComponentStatus {
-                healthy: rabbit_ok.is_ok(),
-                error: rabbit_ok.err(),
             },
             llm: ComponentStatus {
                 healthy: llm_ok,
@@ -250,20 +245,6 @@ async fn ping_redis(url: &str) -> Result<(), String> {
     .await
     .map_err(|_| "PING timed out".to_string())
     .and_then(|r| r.map_err(|e| e.to_string()))?;
-    Ok(())
-}
-
-async fn ping_rabbitmq(url: &str) -> Result<(), String> {
-    let conn = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        lapin::Connection::connect(url, lapin::ConnectionProperties::default()),
-    )
-    .await
-    .map_err(|_| "connection timed out".to_string())
-    .and_then(|r| r.map_err(|e| e.to_string()))?;
-    conn.close(0, "healthcheck".into())
-        .await
-        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

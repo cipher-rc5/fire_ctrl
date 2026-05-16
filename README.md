@@ -21,17 +21,17 @@ flowchart LR
     Client[API Client / SDK] --> API[Axum API<br/>`src/api.rs`]
     API --> Gate[Auth + Resource Gates]
     Gate --> Scraper[Scraper / BrowserPool<br/>`src/scraper.rs`]
-    Gate --> DB[(PostgreSQL + Timescale)]
+    Gate --> DB[(PostgreSQL + Timescale<br/>`nuq.queue_scrape`)]
     Gate --> Redis[(Redis)]
-    Gate --> MQ[(RabbitMQ)]
     API --> Worker[WorkerPool<br/>`src/worker.rs`]
     Worker --> DB
-    Worker --> MQ
     Worker --> Scraper
     Scraper --> Web[(Target websites)]
     Worker --> LLM[LLM Client<br/>`src/llm.rs`]
     LLM --> Provider[OpenAI-compatible provider]
 ```
+
+Job dispatch goes through Postgres: the API enqueues into `nuq.queue_scrape` and workers claim with `FOR UPDATE SKIP LOCKED`.
 
 ## Features
 
@@ -54,8 +54,7 @@ All dependencies are managed via Homebrew. Run `just install` to install and con
 | `timescaledb` | 2.x | TimescaleDB extension for PostgreSQL |
 | `timescaledb-tools` | latest | TimescaleDB CLI utilities |
 | `redis` | 8.x | Cache and rate limiting |
-| `rabbitmq` | 4.x | Job queue message broker |
-| `rust` | 1.93.x | Compiler and toolchain (pinned) |
+| `rust` | 1.95.x | Compiler and toolchain (pinned) |
 | `just` | latest | Task runner |
 | `jq` | latest | JSON output inspection |
 | `hurl` | latest | HTTP benchmarking (`just bench`) |
@@ -98,8 +97,8 @@ Config is strict: the service fails fast if required env vars are missing.
 
 ## Rust toolchain controls
 
-- `Cargo.toml` enforces `rust-version = "1.93"` for compilation.
-- `rust-toolchain.toml` pins local toolchain selection to `1.93.0` and enables `rustfmt` + `clippy`.
+- `Cargo.toml` enforces `rust-version = "1.95"` for compilation.
+- `rust-toolchain.toml` pins local toolchain selection to `1.95.0` and enables `rustfmt` + `clippy`.
 - Verify your active compiler with:
 
 ```bash
@@ -109,8 +108,8 @@ rustc --version
 If you use rustup and need to set the override manually:
 
 ```bash
-rustup toolchain install 1.93.0 --component rustfmt --component clippy
-rustup override set 1.93.0
+rustup toolchain install 1.95.0 --component rustfmt --component clippy
+rustup override set 1.95.0
 ```
 
 ## GitHub Actions policy
@@ -145,7 +144,6 @@ just docs-open
 
 just db-clean
 just redis-clean
-just rabbit-clean
 just data-clean
 ```
 
@@ -153,6 +151,10 @@ just data-clean
 `just api-suite-quotes` runs curl+jq endpoint smoke tests against `https://quotes.toscrape.com`.
 Script entrypoint is `scripts/api-suite-quotes.sh` for direct execution.
 Per-endpoint scripts live in `scripts/api-tests/` (for example `scripts/api-tests/crawl_status.sh`).
+
+## Testing
+
+CI runs `cargo test --bins --locked`, which executes only the binary's inline unit tests for stability. `cargo test` (no flag) additionally compiles integration tests under `tests/` — including `sdk_v2_contract.rs`, which depends on the upstream `firecrawl` SDK and may break when that crate drifts. See `docs/ci.md` for details.
 
 ## Testing output formats
 
@@ -201,7 +203,6 @@ Use `.env.example` as the source of truth. Key variables:
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 - `DATABASE_MAX_CONNECTIONS`
 - `REDIS_URL`, `REDIS_RATE_LIMIT_URL`
-- `NUQ_RABBITMQ_URL`
 - `OPENAI_BASE_URL`, `MODEL_NAME`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `LLM_MAX_INPUT_CHARS`
 - `OPENAI_API_KEY` (required unless using `OLLAMA_BASE_URL`)
 - `NUM_WORKERS_PER_QUEUE`, `MAX_CONCURRENT_JOBS`, `WORKER_JOB_TIMEOUT_SECONDS`, `WORKER_MAX_STALLS`

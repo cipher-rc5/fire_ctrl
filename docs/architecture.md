@@ -17,8 +17,7 @@ flowchart TB
     end
 
     subgraph State[State and infrastructure]
-        PG[(PostgreSQL + Timescale)]
-        RMQ[(RabbitMQ)]
+        PG[(PostgreSQL + Timescale\n`nuq.queue_scrape`)]
         REDIS[(Redis)]
     end
 
@@ -30,8 +29,6 @@ flowchart TB
     API --> Scraper
     API --> PG
     API --> REDIS
-    API --> RMQ
-    Worker --> RMQ
     Worker --> PG
     Worker --> Scraper
     Scraper --> WEB
@@ -40,24 +37,24 @@ flowchart TB
     LLM --> MODEL
 ```
 
+The job queue is Postgres-backed: the API enqueues rows into `nuq.queue_scrape`, and workers claim work with `SELECT ... FOR UPDATE SKIP LOCKED`. There is no external message broker.
+
 ## Request lifecycle (`/v2/crawl`)
 
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant A as API (`/v2/crawl`)
-    participant D as DbClient
-    participant Q as Queue (RabbitMQ)
+    participant D as DbClient (PG queue)
     participant W as Worker
     participant S as Scraper
 
     C->>A: POST /v2/crawl
     A->>A: check_auth + check_resources
-    A->>D: create crawl group + enqueue job metadata
-    A->>Q: publish queued job
+    A->>D: create crawl group + enqueue job into `nuq.queue_scrape`
     A-->>C: 200 with crawl id
 
-    W->>Q: consume job
+    W->>D: claim job (SELECT ... FOR UPDATE SKIP LOCKED)
     W->>S: fetch and scrape URLs
     W->>D: persist status/results
 

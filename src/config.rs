@@ -16,7 +16,6 @@ pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub redis: RedisConfig,
-    pub rabbitmq: RabbitMqConfig,
     pub llm: LlmConfig,
     pub crawler: CrawlerConfig,
     pub worker: WorkerConfig,
@@ -38,7 +37,6 @@ impl Config {
             server: ServerConfig::from_env()?,
             database: DatabaseConfig::from_env()?,
             redis: RedisConfig::from_env()?,
-            rabbitmq: RabbitMqConfig::from_env()?,
             llm: LlmConfig::from_env()?,
             crawler: CrawlerConfig::from_env()?,
             worker: WorkerConfig::from_env()?,
@@ -127,23 +125,6 @@ impl RedisConfig {
         Ok(Self {
             url: env_required_str("REDIS_URL")?,
             rate_limit_url: env_required_str("REDIS_RATE_LIMIT_URL")?,
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// RabbitMQ
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub struct RabbitMqConfig {
-    pub url: String,
-}
-
-impl RabbitMqConfig {
-    fn from_env() -> anyhow::Result<Self> {
-        Ok(Self {
-            url: env_required_str("NUQ_RABBITMQ_URL")?,
         })
     }
 }

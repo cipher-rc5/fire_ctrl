@@ -89,3 +89,24 @@ binary, so verification only confirms transit integrity (download was
 not corrupted or swapped). For supply-chain provenance, also inspect
 the workflow run logs to confirm the source ref, the runner image, and
 the Rust toolchain version that produced the binary.
+
+## Test gating
+
+CI deliberately runs a narrower test set than `cargo test`.
+
+- `cargo test --bins` compiles and runs only the binary's inline unit tests
+  (the `#[cfg(test)] mod tests` blocks inside `src/`). This is fast and has
+  no external dependencies.
+- `cargo test` (no flag) additionally compiles every integration test under
+  `tests/`. That includes `tests/sdk_v2_contract.rs`, which pulls in the
+  upstream `firecrawl` SDK as a dev-dependency. The upstream crate is tracked
+  via a git dependency and can change types or method signatures between
+  commits, which has broken our build in the past even though no `fire_ctrl`
+  code changed.
+- CI therefore runs `cargo test --bins --locked` for stability. Developers
+  who want to exercise the SDK contract surface should opt in locally with
+  `cargo test --features contract-tests` (assuming the corresponding feature
+  flag is in place; see the relevant PR).
+
+If you see CI green but local `cargo test` failures, the most likely cause
+is upstream SDK drift — re-run with `--bins` to confirm.
