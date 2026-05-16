@@ -16,73 +16,189 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinHandle;
+use tracing::{debug, error, warn};
 use url::Url;
+
+/// Maximum recursion depth when walking sitemap-of-sitemaps. Protects against
+/// cycles and pathological nesting.
+const DEFAULT_SITEMAP_MAX_DEPTH: usize = 5;
 
 // ---------------------------------------------------------------------------
 // Browser pool
 // ---------------------------------------------------------------------------
 
+/// A bounded pool of headless Chromium instances. Concurrent claims are
+/// limited by a semaphore equal to the pool size; each acquire returns a
+/// guard that releases the browser back to the pool on drop.
 #[derive(Clone)]
 pub struct BrowserPool {
-    inner: Arc<Mutex<Option<Arc<Browser>>>>,
-    config: Arc<CrawlerConfig>,
+    inner: Arc<BrowserPoolInner>,
+}
+
+struct BrowserPoolInner {
+    pool: Mutex<VecDeque<Arc<Browser>>>,
+    semaphore: Arc<Semaphore>,
+    /// Held so the chromiumoxide handler tasks survive for the pool's
+    /// lifetime. Each task pumps the per-browser event stream.
+    _handlers: Vec<JoinHandle<()>>,
+    /// Watchdog that logs when any handler exits unexpectedly.
+    _supervisor: JoinHandle<()>,
+}
+
+/// RAII guard yielded by [`BrowserPool::acquire`]. Returns the underlying
+/// browser to the pool when dropped.
+pub struct BrowserGuard {
+    browser: Option<Arc<Browser>>,
+    pool: Arc<BrowserPoolInner>,
+    // Permit released on drop, AFTER we push back to the pool.
+    _permit: OwnedSemaphorePermit,
+}
+
+impl BrowserGuard {
+    /// Borrow the underlying browser.
+    pub fn browser(&self) -> &Browser {
+        // Safe: `browser` is Some for the guard's entire lifetime; we only
+        // take() in Drop.
+        self.browser
+            .as_deref()
+            .expect("BrowserGuard accessed after drop")
+    }
+}
+
+impl Drop for BrowserGuard {
+    fn drop(&mut self) {
+        if let Some(browser) = self.browser.take() {
+            // Push back synchronously via try_lock; if contended, spawn a
+            // task to do it. Mutex contention is rare here because acquires
+            // are bounded by the semaphore.
+            if let Ok(mut deque) = self.pool.pool.try_lock() {
+                deque.push_back(browser);
+            } else {
+                let pool = Arc::clone(&self.pool);
+                tokio::spawn(async move {
+                    let mut deque = pool.pool.lock().await;
+                    deque.push_back(browser);
+                });
+            }
+        }
+    }
 }
 
 impl BrowserPool {
-    pub fn new(config: CrawlerConfig) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(None)),
-            config: Arc::new(config),
+    /// Build a pool of `size` browsers. `size` is clamped to at least 1.
+    pub async fn new(size: usize, config: &CrawlerConfig) -> Result<Self, AppError> {
+        let size = size.max(1);
+        let mut deque: VecDeque<Arc<Browser>> = VecDeque::with_capacity(size);
+        let mut handlers: Vec<JoinHandle<()>> = Vec::with_capacity(size);
+
+        for browser_id in 0..size {
+            let builder = BrowserConfig::builder()
+                .arg("--no-sandbox")
+                .arg("--disable-setuid-sandbox")
+                .arg("--disable-dev-shm-usage")
+                .arg("--disable-gpu")
+                .arg(format!("--user-agent={}", config.user_agent));
+
+            let browser_cfg = builder
+                .build()
+                .map_err(|e| AppError::Scraper(format!("Browser config error: {e}")))?;
+
+            let (browser, mut handler) = Browser::launch(browser_cfg)
+                .await
+                .map_err(|e| AppError::Scraper(format!("Browser launch failed: {e}")))?;
+
+            let handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+            handlers.push(handle);
+            deque.push_back(Arc::new(browser));
+            debug!(browser_id, "Browser launched and added to pool");
         }
+
+        // Spawn a supervisor that polls handlers for unexpected termination.
+        // We snapshot the AbortHandles (handles themselves are owned by the
+        // pool to keep tasks alive).
+        let supervisor_handles: Vec<_> = handlers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (i, h.abort_handle()))
+            .collect();
+
+        let supervisor = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                for (browser_id, h) in &supervisor_handles {
+                    if h.is_finished() {
+                        error!(
+                            browser_id = *browser_id,
+                            "browser handler exited unexpectedly"
+                        );
+                    }
+                }
+            }
+        });
+
+        let semaphore = Arc::new(Semaphore::new(size));
+
+        Ok(Self {
+            inner: Arc::new(BrowserPoolInner {
+                pool: Mutex::new(deque),
+                semaphore,
+                _handlers: handlers,
+                _supervisor: supervisor,
+            }),
+        })
     }
 
-    async fn get_or_launch(&self) -> Result<Arc<Browser>, AppError> {
-        let mut guard = self.inner.lock().await;
-        if let Some(ref b) = *guard {
-            return Ok(Arc::clone(b));
-        }
-
-        let builder = BrowserConfig::builder()
-            .arg("--no-sandbox")
-            .arg("--disable-setuid-sandbox")
-            .arg("--disable-dev-shm-usage")
-            .arg("--disable-gpu")
-            .arg(format!("--user-agent={}", self.config.user_agent));
-
-        let browser_cfg = builder
-            .build()
-            .map_err(|e| AppError::Scraper(format!("Browser config error: {e}")))?;
-
-        let (browser, mut handler) = Browser::launch(browser_cfg)
+    /// Async-acquire a browser. Waits until a slot is available, then pops
+    /// one off the pool. The returned [`BrowserGuard`] releases it on drop.
+    pub async fn acquire(&self) -> Result<BrowserGuard, AppError> {
+        let permit = Arc::clone(&self.inner.semaphore)
+            .acquire_owned()
             .await
-            .map_err(|e| AppError::Scraper(format!("Browser launch failed: {e}")))?;
+            .map_err(|e| AppError::Scraper(format!("Browser semaphore closed: {e}")))?;
 
-        tokio::spawn(async move { while handler.next().await.is_some() {} });
+        let browser = {
+            let mut deque = self.inner.pool.lock().await;
+            deque.pop_front().ok_or_else(|| {
+                AppError::Scraper(
+                    "Browser pool invariant violated: permit acquired but pool empty".to_string(),
+                )
+            })?
+        };
 
-        let shared = Arc::new(browser);
-        *guard = Some(Arc::clone(&shared));
-        Ok(shared)
+        Ok(BrowserGuard {
+            browser: Some(browser),
+            pool: Arc::clone(&self.inner),
+            _permit: permit,
+        })
     }
 
+    /// Close all browsers and stop accepting new claims.
     pub async fn shutdown(&self) {
-        let mut guard = self.inner.lock().await;
-        if let Some(browser) = guard.take()
-            && let Ok(mut b) = Arc::try_unwrap(browser)
-            && let Err(e) = b.close().await
-        {
-            warn!(error = %e, "Browser close error");
+        // Close the semaphore so future acquires fail fast.
+        self.inner.semaphore.close();
+        let mut deque = self.inner.pool.lock().await;
+        while let Some(browser) = deque.pop_front() {
+            if let Ok(mut b) = Arc::try_unwrap(browser)
+                && let Err(e) = b.close().await
+            {
+                warn!(error = %e, "Browser close error");
+            }
         }
     }
 
+    /// Convenience wrapper used by `Scraper::scrape` — claim a browser, open
+    /// a page, return `(html, title)`.
     pub async fn fetch_page(
         &self,
         url: &str,
         wait_for_ms: u32,
         timeout: Duration,
     ) -> Result<(String, Option<String>), AppError> {
-        let browser = self.get_or_launch().await?;
+        let guard = self.acquire().await?;
+        let browser = guard.browser();
 
         let page = tokio::time::timeout(timeout, browser.new_page(url))
             .await
@@ -215,18 +331,40 @@ impl HttpScraper {
         );
         let mut collected = Vec::new();
         let mut visited = HashSet::new();
-        self.collect_sitemap_urls(&sitemap_url, limit, &mut collected, &mut visited)
-            .await;
+        self.collect_sitemap_urls(
+            &sitemap_url,
+            limit,
+            DEFAULT_SITEMAP_MAX_DEPTH,
+            0,
+            &mut collected,
+            &mut visited,
+        )
+        .await;
         collected
     }
 
+    /// Recursively walk a sitemap (or sitemap-of-sitemaps).
+    ///
+    /// Stops when any of these are exceeded:
+    /// - `limit` URLs have been collected
+    /// - `max_depth` levels of sitemap-of-sitemap nesting (default 5)
+    /// - the same sitemap URL has already been visited (cycle guard)
     async fn collect_sitemap_urls(
         &self,
         url: &str,
         limit: usize,
+        max_depth: usize,
+        depth: usize,
         collected: &mut Vec<String>,
         visited: &mut HashSet<String>,
     ) {
+        if depth > max_depth {
+            debug!(
+                url,
+                depth, max_depth, "Sitemap recursion depth exceeded; bailing"
+            );
+            return;
+        }
         if collected.len() >= limit || !visited.insert(url.to_string()) {
             return;
         }
@@ -259,7 +397,15 @@ impl HttpScraper {
             if collected.len() >= limit {
                 break;
             }
-            Box::pin(self.collect_sitemap_urls(&child, limit, collected, visited)).await;
+            Box::pin(self.collect_sitemap_urls(
+                &child,
+                limit,
+                max_depth,
+                depth + 1,
+                collected,
+                visited,
+            ))
+            .await;
         }
     }
 }
@@ -280,47 +426,21 @@ pub fn html_to_markdown(html: &str) -> String {
     htmd::convert(html).unwrap_or_default()
 }
 
-pub fn html_to_text(html: &str) -> String {
+/// Strip HTML to whitespace-normalized text.
+///
+/// Tries content-bearing semantic regions first (`<article>`, `<main>`,
+/// `[role="main"]`) before falling back to `<body>`. This replaces the
+/// previous `html_to_text` + `extract_main_content` split: the algorithm is
+/// identical except that the old `html_to_text` skipped the semantic
+/// preference list. Callers that want body-only text can pass
+/// `prefer_main_content = false`.
+pub fn extract_text(html: &str, prefer_main_content: bool) -> String {
     let doc = Html::parse_document(html);
-    let Ok(sel) = Selector::parse("body") else {
-        return String::new();
+    let candidates: &[&str] = if prefer_main_content {
+        &["article", "main", "[role='main']", "body"]
+    } else {
+        &["body"]
     };
-    doc.select(&sel)
-        .next()
-        .map(|body| {
-            body.text()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .unwrap_or_default()
-}
-
-pub fn extract_links(html: &str, base_url: &Url) -> Vec<String> {
-    let doc = Html::parse_document(html);
-    let Ok(sel) = Selector::parse("a[href]") else {
-        return Vec::new();
-    };
-    let mut links = Vec::new();
-    for el in doc.select(&sel) {
-        if let Some(href) = el.value().attr("href")
-            && let Ok(resolved) = base_url.join(href)
-            && matches!(resolved.scheme(), "http" | "https")
-        {
-            links.push(resolved.to_string());
-        }
-    }
-    links
-}
-
-/// Strip HTML tags and reduce to main content using a simple heuristic:
-/// prefer `<article>`, `<main>`, `<div role="main">` before falling back
-/// to `<body>`.
-pub fn extract_main_content(html: &str) -> String {
-    let doc = Html::parse_document(html);
-    let candidates = ["article", "main", "[role='main']", "body"];
     for selector_str in candidates {
         if let Ok(sel) = Selector::parse(selector_str)
             && let Some(el) = doc.select(&sel).next()
@@ -340,27 +460,46 @@ pub fn extract_main_content(html: &str) -> String {
     String::new()
 }
 
+pub fn extract_links(html: &str, base_url: &Url) -> Vec<String> {
+    let doc = Html::parse_document(html);
+    let Ok(sel) = Selector::parse("a[href]") else {
+        return Vec::new();
+    };
+    let mut links = Vec::new();
+    for el in doc.select(&sel) {
+        if let Some(href) = el.value().attr("href")
+            && let Ok(resolved) = base_url.join(href)
+            && matches!(resolved.scheme(), "http" | "https")
+        {
+            links.push(resolved.to_string());
+        }
+    }
+    links
+}
+
 // ---------------------------------------------------------------------------
 // Top-level Scraper (combines HTTP + browser)
 // ---------------------------------------------------------------------------
 
 pub struct Scraper {
-    pub http: HttpScraper,
-    pub browser: BrowserPool,
+    pub(crate) http: HttpScraper,
+    pub(crate) browser: BrowserPool,
     config: Arc<CrawlerConfig>,
 }
 
 impl Scraper {
-    pub fn new(cfg: &CrawlerConfig, proxy: &ProxyConfig) -> Result<Self, AppError> {
+    pub async fn new(cfg: &CrawlerConfig, proxy: &ProxyConfig) -> Result<Self, AppError> {
         debug!(
             concurrent_requests = cfg.concurrent_requests,
             browser_pool_size = cfg.browser_pool_size,
             "Crawler runtime settings"
         );
 
+        let browser = BrowserPool::new(cfg.browser_pool_size as usize, cfg).await?;
+
         Ok(Self {
             http: HttpScraper::new(cfg, proxy)?,
-            browser: BrowserPool::new(cfg.clone()),
+            browser,
             config: Arc::new(cfg.clone()),
         })
     }
@@ -373,6 +512,22 @@ impl Scraper {
     /// extract, search). Sourced from `CRAWL_CONCURRENT_REQUESTS`.
     pub fn concurrent_requests(&self) -> usize {
         self.config.concurrent_requests.max(1) as usize
+    }
+
+    /// Façade: HTTP-only scrape of a URL. Returns `(status, content_type, body)`.
+    pub async fn scrape_http(&self, url: &str) -> Result<(u16, Option<String>, String), AppError> {
+        self.http.fetch(url).await
+    }
+
+    /// Façade: headless browser scrape of a URL.
+    #[allow(dead_code)] // public façade for forward compatibility
+    pub async fn scrape_browser(
+        &self,
+        url: &str,
+        wait_for_ms: u32,
+        timeout: Duration,
+    ) -> Result<(String, Option<String>), AppError> {
+        self.browser.fetch_page(url, wait_for_ms, timeout).await
     }
 
     /// Scrape a single URL and return a `ScrapeResult`.
@@ -442,12 +597,7 @@ impl Scraper {
                     result.markdown = Some(html_to_markdown(&html));
                 }
                 OutputFormat::Html => {
-                    let main = if job.only_main_content {
-                        extract_main_content(&html)
-                    } else {
-                        html_to_text(&html)
-                    };
-                    result.html = Some(main);
+                    result.html = Some(extract_text(&html, job.only_main_content));
                 }
                 OutputFormat::RawHtml => {
                     result.raw_html = Some(html.clone());
@@ -477,14 +627,39 @@ impl Scraper {
 // ---------------------------------------------------------------------------
 
 pub struct CrawlParams<'a> {
-    pub root_url: String,
-    pub max_depth: u32,
-    pub limit: u32,
-    pub scrape_options: &'a ScrapeOptions,
-    pub allow_external_links: bool,
-    pub ignore_sitemap: bool,
-    pub include_paths: &'a [String],
-    pub exclude_paths: &'a [String],
+    pub(crate) root_url: String,
+    pub(crate) max_depth: u32,
+    pub(crate) limit: u32,
+    pub(crate) scrape_options: &'a ScrapeOptions,
+    pub(crate) allow_external_links: bool,
+    pub(crate) ignore_sitemap: bool,
+    pub(crate) include_paths: &'a [String],
+    pub(crate) exclude_paths: &'a [String],
+}
+
+impl<'a> CrawlParams<'a> {
+    #[allow(clippy::too_many_arguments, dead_code)] // public constructor for forward compatibility
+    pub fn new(
+        root_url: String,
+        max_depth: u32,
+        limit: u32,
+        scrape_options: &'a ScrapeOptions,
+        allow_external_links: bool,
+        ignore_sitemap: bool,
+        include_paths: &'a [String],
+        exclude_paths: &'a [String],
+    ) -> Self {
+        Self {
+            root_url,
+            max_depth,
+            limit,
+            scrape_options,
+            allow_external_links,
+            ignore_sitemap,
+            include_paths,
+            exclude_paths,
+        }
+    }
 }
 
 impl Scraper {
@@ -735,7 +910,7 @@ fn html_to_structured_json(html: &str, base_url: &Url) -> serde_json::Value {
         .take(200)
         .collect::<Vec<_>>();
 
-    let main_text = extract_main_content(html);
+    let main_text = extract_text(html, true);
     let text_preview = main_text.chars().take(3000).collect::<String>();
 
     serde_json::json!({
