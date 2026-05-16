@@ -51,8 +51,10 @@ impl ResourceSnapshot {
     }
 
     fn store(&self, cpu_frac: f64, ram_frac: f64) {
-        let cpu = (cpu_frac * 1_000.0) as u64;
-        let ram = (ram_frac * 1_000.0) as u64;
+        // Clamp each half to u32::MAX so absurd or NaN-cast f64 inputs
+        // cannot wrap past 32 bits and corrupt the other half of the packed u64.
+        let cpu = ((cpu_frac * 1_000.0) as u64).min(u32::MAX as u64);
+        let ram = ((ram_frac * 1_000.0) as u64).min(u32::MAX as u64);
         self.0.store((cpu << 32) | ram, Ordering::Relaxed);
     }
 
@@ -492,14 +494,24 @@ async fn crawl_cancel_handler(
 ) -> Result<impl IntoResponse, AppError> {
     check_auth(&headers, &state.cfg)?;
 
-    if state.db.get_crawl_group(id).await.is_ok() {
-        state.db.cancel_group(id).await?;
-    } else {
-        let job = state.db.get_job(id).await?;
-        if let Some(group_id) = job.group_id {
-            state.db.cancel_group(group_id).await?;
+    // Explicitly distinguish "group not found" from a transient DB error.
+    // `is_ok()` would swallow transient errors as "treat as a job ID", which
+    // can produce misleading 404s when the database is degraded.
+    match state.db.get_crawl_group(id).await {
+        Ok(_) => {
+            state.db.cancel_group(id).await?;
         }
-        state.db.cancel_job(id).await?;
+        Err(AppError::NotFound(_)) => {
+            let job = state.db.get_job(id).await?;
+            if let Some(group_id) = job.group_id {
+                state.db.cancel_group(group_id).await?;
+            }
+            state.db.cancel_job(id).await?;
+        }
+        Err(e) => {
+            warn!(%id, error = %e, "cancel: DB error looking up crawl group");
+            return Err(e);
+        }
     }
 
     Ok(Json(serde_json::json!({ "status": "cancelled" })))
@@ -516,11 +528,18 @@ async fn crawl_errors_handler(
 ) -> Result<impl IntoResponse, AppError> {
     check_auth(&headers, &state.cfg)?;
 
-    let group_id = if state.db.get_crawl_group(id).await.is_ok() {
-        id
-    } else {
-        let job = state.db.get_job(id).await?;
-        job.group_id.ok_or(AppError::NotFound(id.to_string()))?
+    // Distinguish "group not found" (fall back to job lookup) from a
+    // transient DB error (propagate as 500) instead of conflating them.
+    let group_id = match state.db.get_crawl_group(id).await {
+        Ok(_) => id,
+        Err(AppError::NotFound(_)) => {
+            let job = state.db.get_job(id).await?;
+            job.group_id.ok_or(AppError::NotFound(id.to_string()))?
+        }
+        Err(e) => {
+            warn!(%id, error = %e, "errors: DB error looking up crawl group");
+            return Err(e);
+        }
     };
 
     // Return all failed sub-jobs with their reasons.
@@ -825,8 +844,13 @@ async fn search_handler(
     )
     .await?;
 
-    let mut results: Vec<SearchWebResult> = Vec::new();
     let scrape_opts = req.scrape_options.as_ref();
+
+    // Parallelise per-URL scrapes, bounded by `concurrent_requests` so a
+    // wide search doesn't fan out to hundreds of simultaneous fetches.
+    let parallel = state.scraper.concurrent_requests();
+    let local_sem = Arc::new(tokio::sync::Semaphore::new(parallel));
+    let mut tasks: tokio::task::JoinSet<Option<SearchWebResult>> = tokio::task::JoinSet::new();
 
     for url in urls {
         let job = ScrapeJobData {
@@ -850,18 +874,33 @@ async fn search_handler(
             location: None,
             webhook: None,
         };
-        if let Ok(result) = state.scraper.scrape(&job).await {
+        let scraper = Arc::clone(&state.scraper);
+        let sem = Arc::clone(&local_sem);
+        tasks.spawn(async move {
+            let _permit = sem.acquire_owned().await.ok()?;
+            let result = scraper.scrape(&job).await.ok()?;
             let description = result
                 .markdown
                 .as_ref()
                 .and_then(|m| m.lines().find(|line| !line.trim().is_empty()))
                 .map(|s| s.chars().take(180).collect::<String>());
-            results.push(SearchWebResult {
+            Some(SearchWebResult {
                 url: result.url,
                 title: result.title,
                 description,
                 category: None,
-            });
+            })
+        });
+    }
+
+    let mut results: Vec<SearchWebResult> = Vec::new();
+    while let Some(joined) = tasks.join_next().await {
+        match joined {
+            Ok(Some(r)) => results.push(r),
+            Ok(None) => {}
+            Err(e) => {
+                warn!(error = %e, "Search: scrape task panicked (skipping)");
+            }
         }
     }
 
@@ -981,4 +1020,31 @@ async fn google_search(
     }
 
     Ok(urls)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_snapshot_clamps_absurd_values_to_u32_max() {
+        // 1e30 * 1_000.0 vastly exceeds u32::MAX; without the clamp the
+        // packing would wrap and silently corrupt the other half.
+        let snap = ResourceSnapshot::new();
+        snap.store(1e30, 1e30);
+        let raw = snap.0.load(Ordering::Relaxed);
+        let high = (raw >> 32) as u32;
+        let low = (raw & 0xFFFF_FFFF) as u32;
+        assert_eq!(high, u32::MAX, "cpu half must be clamped to u32::MAX");
+        assert_eq!(low, u32::MAX, "ram half must be clamped to u32::MAX");
+    }
+
+    #[test]
+    fn resource_snapshot_round_trips_normal_values() {
+        let snap = ResourceSnapshot::new();
+        snap.store(0.42, 0.73);
+        let (cpu, ram) = snap.load();
+        assert!((cpu - 0.42).abs() < 1e-3);
+        assert!((ram - 0.73).abs() < 1e-3);
+    }
 }

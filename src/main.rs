@@ -56,10 +56,10 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    let cfg = config::Config::from_env().unwrap_or_else(|e| {
+    let cfg = config::Config::from_env().map_err(|e| {
         tracing::warn!("Config load error: {e}");
-        panic!("Cannot start without a valid configuration: {e}");
-    });
+        anyhow::anyhow!("Cannot start without a valid configuration: {e}")
+    })?;
 
     let cli = Cli::parse();
 
