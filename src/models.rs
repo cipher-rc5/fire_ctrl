@@ -430,6 +430,7 @@ pub struct GroupCrawlRow {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct ScrapeRequest {
     pub url: String,
     #[serde(default)]
@@ -459,6 +460,7 @@ pub struct ScrapeRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct CrawlRequest {
     pub url: String,
     #[serde(rename = "maxDepth", default = "default_max_depth")]
@@ -484,6 +486,7 @@ pub struct CrawlRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct BatchScrapeRequest {
     pub urls: Vec<String>,
     #[serde(rename = "scrapeOptions", default)]
@@ -495,6 +498,7 @@ pub struct BatchScrapeRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct MapRequest {
     pub url: String,
     #[serde(default)]
@@ -508,6 +512,7 @@ pub struct MapRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct ExtractRequest {
     pub urls: Vec<String>,
     #[serde(default)]
@@ -525,6 +530,7 @@ pub struct ExtractRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct SearchRequest {
     pub query: String,
     #[serde(default = "default_search_limit")]
@@ -544,12 +550,14 @@ pub struct SearchRequest {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ScrapeResponse {
     pub success: bool,
     pub data: ScrapeResult,
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct CrawlResponse {
     pub success: bool,
     pub id: Uuid,
@@ -557,6 +565,7 @@ pub struct CrawlResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct CrawlStatusResponse {
     pub status: JobStatus,
     /// Total pages discovered so far (or at completion).
@@ -575,6 +584,7 @@ pub struct CrawlStatusResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct BatchScrapeResponse {
     pub success: bool,
     pub id: Uuid,
@@ -584,12 +594,14 @@ pub struct BatchScrapeResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct MapResponse {
     pub success: bool,
     pub links: Vec<SearchWebResult>,
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ExtractResponse {
     pub success: bool,
     pub id: Uuid,
@@ -597,6 +609,7 @@ pub struct ExtractResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ExtractStatusResponse {
     pub status: JobStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -606,12 +619,14 @@ pub struct ExtractStatusResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct SearchResponse {
     pub success: bool,
     pub data: SearchResponseData,
 }
 
 #[derive(Debug, Serialize, Default)]
+#[non_exhaustive]
 pub struct SearchResponseData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web: Option<Vec<SearchWebResult>>,
@@ -622,6 +637,7 @@ pub struct SearchResponseData {
 }
 
 #[derive(Debug, Serialize, Clone)]
+#[non_exhaustive]
 pub struct SearchWebResult {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -633,12 +649,14 @@ pub struct SearchWebResult {
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct HealthResponse {
     pub status: String,
     pub services: ServiceHealth,
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ServiceHealth {
     pub database: ComponentStatus,
     pub redis: ComponentStatus,
@@ -646,6 +664,7 @@ pub struct ServiceHealth {
 }
 
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ComponentStatus {
     pub healthy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

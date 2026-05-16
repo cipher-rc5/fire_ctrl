@@ -131,7 +131,7 @@ async fn run_worker(cfg: config::Config) -> Result<()> {
         )
     })?;
 
-    let scraper = Arc::new(scraper::Scraper::new(&cfg.crawler, &cfg.proxy)?);
+    let scraper = Arc::new(scraper::Scraper::new(&cfg.crawler, &cfg.proxy).await?);
     let llm = Arc::new(llm::LlmClient::new(&cfg.llm)?);
 
     let result = worker::WorkerPool::new(
@@ -209,7 +209,7 @@ async fn build_state(cfg: &config::Config) -> Result<api::AppState> {
         )
     })?;
 
-    let scraper = Arc::new(scraper::Scraper::new(&cfg.crawler, &cfg.proxy)?);
+    let scraper = Arc::new(scraper::Scraper::new(&cfg.crawler, &cfg.proxy).await?);
     let llm = Arc::new(llm::LlmClient::new(&cfg.llm)?);
     let resources = api::ResourceSnapshot::new();
     api::spawn_resource_monitor(resources.clone());

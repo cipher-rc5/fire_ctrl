@@ -968,7 +968,7 @@ async fn searxng_search(
         url.push_str(&format!("&region={}", urlencoding::encode(region)));
     }
 
-    let (_, _, body_text) = scraper.http.fetch(&url).await?;
+    let (_, _, body_text) = scraper.scrape_http(&url).await?;
     let body: serde_json::Value = serde_json::from_str(&body_text)
         .map_err(|e| AppError::Scraper(format!("SearXNG response parse failed: {e}")))?;
 
@@ -994,7 +994,7 @@ async fn google_search(
         limit.min(10)
     );
 
-    let (_, _, html) = scraper.http.fetch(&search_url).await?;
+    let (_, _, html) = scraper.scrape_http(&search_url).await?;
 
     let doc = scraper::Html::parse_document(&html);
     let sel = scraper::Selector::parse("a[href]")
