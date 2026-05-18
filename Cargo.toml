@@ -94,7 +94,7 @@ clap = { version = "4", features = ["derive"] }
 urlencoding = "2"
 
 # system_metrics (cpu / ram gating)
-sysinfo = "0.39.1"
+sysinfo = "0.39.2"
 
 [dev-dependencies]
 firecrawl = { git = "https://github.com/firecrawl/firecrawl", package = "firecrawl", rev = "3afe6df1f48f4485b8a018069ad8bbf54ae99cb2" }
