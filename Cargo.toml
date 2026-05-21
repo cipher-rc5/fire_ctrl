@@ -106,7 +106,7 @@ proptest = "1"
 # Postgres integration tests against a containerised TimescaleDB.
 testcontainers = "0.27"
 # Benchmark harness for BFS + markdown conversion.
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [profile.release]
 opt-level = 3
