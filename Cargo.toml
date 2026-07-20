@@ -35,7 +35,7 @@ postgres-integration = []
 # web_framework
 axum = { version = "0.8.9", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-full"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "compression-full"] }
 
 # database
 deadpool-postgres = "0.14"
